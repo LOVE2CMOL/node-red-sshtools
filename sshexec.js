@@ -147,7 +147,28 @@ module.exports = function(RED) {
 		}
 
 		node.on('input', function(msg, nodeSend, nodeDone) {
-			if (node.ssh_ctrl()) {
+			let sshInst = node.ssh_ctrl();
+			if (sshInst) {
+				const client = sshInst._sshconn;
+				let isReady = false;
+				// 安全判断连接状态，不依赖私有_isconnected函数
+				if (client) {
+					// 正在连接中 || socket可读写未结束
+					if (client.sshconnecting === true) {
+						isReady = true;
+					} else if (client._sock && client._sock.writable && client._sock._readableState && client._sock._readableState.ended === false) {
+						isReady = true;
+					}
+				}
+
+				if (!isReady) {
+					// 连接未就绪：直接丢弃本条消息，不延时重试、不加入队列
+					node.status({fill:"red",shape:"ring",text:"SSH断开，丢弃任务"});
+					// 清空本地积压执行队列，防止瞬间爆发
+					activeProcesses = [];
+					nodeDone();
+					return;
+				}
 				if (msg.hasOwnProperty("kill")) {
 					if (activeProcesses.length > 0) {
 						if (activeProcesses[0].killexec) {

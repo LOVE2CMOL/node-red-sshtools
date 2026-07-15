@@ -132,6 +132,10 @@ function _buildtunnel(self) {
 	while(self._cmdqueue.length > 0) {
 		let cmdobj = self._cmdqueue.shift();
 		switch(cmdobj.type) {
+		case "RECONNECT":
+			// 仅建立连接，无业务执行
+			if(typeof cmdobj.rdyfcn === "function") cmdobj.rdyfcn(null);
+		break;
 		case "TCPIN":
 		try {
 			self._sshLog("Creating tunnel IN " + cmdobj.param.host + ":" + cmdobj.param.port);
@@ -1004,6 +1008,82 @@ SSHTools.prototype.parseFloat = function(string, radix) {
 		return parseInt(string[0], radix);
 	}
 	return 0.0;
+};
+
+// 手动强制重建SSH连接接口
+SSHTools.prototype.reconnect = function() {
+    let self = this;
+    // 彻底销毁现有连接
+    self.end();
+    // 解除禁用标记
+    self._sshdisabled = false;
+    // 压入重连占位指令触发建连
+    if (self._cmdqueue.length === 0) {
+        self._cmdqueue.push({
+            type: "RECONNECT",
+            param: {},
+            rdyfcn: function(err) {
+                if(err) self._sshLog("手动重连失败：" + err.message);
+                else self._sshLog("手动重连成功");
+            }
+        });
+    }
+    // 重建ssh客户端
+    if (self._sshconn == null) {
+        self._sshconn = new SSH2.Client();
+        self._sshconn.sshconnecting = true;
+        self._sshconn.sshtimeout = null;
+        self._sshconn.listening = {};
+
+        self._sshLog("【手动重连】Connecting to SSH server " + self._sshcfg.host + ":" + self._sshcfg.port);
+
+        self._sshconn.on("ready", function() {
+            self._sshLog("【手动重连】Connected to SSH server " + self._sshcfg.host + ":" + self._sshcfg.port);
+            self._sshconn.sshconnecting = false;
+            self._sshconn._sock.setKeepAlive(true, self._sshcfg.connectTimeout*2);
+            _buildtunnel(self);
+        }).on("end", function() {
+            self._sshLog("【手动重连】Ending Connection to SSH server "+self._sshcfg.host+":"+self._sshcfg.port);
+            _clearcmd(self, new Error('SSH Connection Ending'));
+            if (self._sshconn) { self._sshconn.end(); }
+        }).on("close", function(had_error) {
+            self._sshLog("【手动重连】Closing Connection to SSH server "+self._sshcfg.host+":"+self._sshcfg.port);
+            if (self._sshconn && self._sshconn._chanMgr) {
+                const chnls = Object.values(self._sshconn._chanMgr._channels || {});
+                for (let ch of chnls) {
+                    try {
+                        if (ch.tlsSock) ch.tlsSock.destroy();
+                        ch.destroy();
+                    } catch(e) {}
+                }
+                self._sshconn.sshconnecting = false;
+                self._sshconn.sshtimeout = null;
+            }
+            let errobj = (had_error?had_error:new Error('SSH Connection Closing'));
+            _clearcmd(self, errobj);
+            _retrycall(self, errobj);
+            self.end();
+        }).on("error", function(e) {
+            self._sshLog("【手动重连】Connection Error("+self._sshcfg.host+":"+self._sshcfg.port + "):" + e);
+            if (self._sshconn && self._sshconn._chanMgr) {
+                const chnls = Object.values(self._sshconn._chanMgr._channels || {});
+                for (let ch of chnls) {
+                    try {
+                        if (ch.tlsSock) ch.tlsSock.destroy();
+                        ch.destroy();
+                    } catch(e) {}
+                }
+                self._sshconn.sshconnecting = false;
+                self._sshconn.sshtimeout = null;
+            }
+            _clearcmd(self, e);
+            _retrycall(self, e);
+            self.end();
+        }).on("keyboard-interactive", function(name, descr, lang, prompts, finish) {
+            if (self._sshconn) return finish([self._sshcfg.password]);
+            else return finish([""]);
+        }).connect(self._sshcfg);
+    }
 };
 
 SSHTools.isUtf8 = _isUtf8;

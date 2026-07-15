@@ -1,0 +1,28 @@
+<script type="text/x-red" data-template-name="ssh-reconnect">
+    <div class="form-row">
+        <label for="node-input-sshccfg"><i class="fa fa-server"></i> SSH Connection</label>
+        <input type="text" id="node-input-sshccfg" placeholder="SSH连接配置" data-type="ssh-conncfg">
+    </div>
+    <div class="form-tips">
+        输入任意消息触发对应SSH连接手动重连
+    </div>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('ssh-reconnect',{
+        category: 'sshtools',
+        color: '#92c7cf',
+        defaults: {
+            sshccfg: { type: "ssh-conncfg", value: "" }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "server.svg",
+        label: function() {
+            return this.name || "ssh-reconnect";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        }
+    });
+</script>

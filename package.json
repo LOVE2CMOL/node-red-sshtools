@@ -23,6 +23,7 @@
       "sshconncfg": "sshconncfg.js",
       "sshexec": "sshexec.js",
       "sshfile": "sshfile.js",
+      "ssh-reconnect": "sshreconnect.js",
       "sshtun": "sshtun.js"
     }
   },

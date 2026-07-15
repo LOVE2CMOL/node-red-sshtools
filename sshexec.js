@@ -48,6 +48,7 @@ module.exports = function(RED) {
 					cmdobj.killexec = stream.killexec || function() {};
 
 					stream.on('data', function(data) {
+						if (data == null) return;
 						if (SSHTools.isUtf8(data)) cmdobj.msg.payload = data.toString();
 						else cmdobj.msg.payload = data;
 						cmdobj.msgsend([
@@ -67,7 +68,8 @@ module.exports = function(RED) {
 					}).on('error', function(code) {
 						node.status({fill:"red",shape:"dot",text:"error:"+code});
 						nxtfcn();
-					}).stderr.on('data', function(data) {
+					}).stream.stderr.on('data', function(data) {
+						if (data == null) return;
 						if (SSHTools.isUtf8(data)) cmdobj.msg.payload = data.toString();
 						else cmdobj.msg.payload = data;
 						cmdobj.msgsend([null,
@@ -86,6 +88,12 @@ module.exports = function(RED) {
 			if (node.ssh_ctrl()) {
 				node.ssh_ctrl().exec(cmdobj.arg, cmdobj.param,
 							function (err, stdout, stderr) {
+								
+					if(err) {
+						node.error(err);
+						node.status({fill:"red",shape:"dot",text:"error"});
+						return;
+					}
 					let msg = cmdobj.msg, msg2 = null, msg3 = null;
 
 					delete msg.payload;
@@ -95,14 +103,21 @@ module.exports = function(RED) {
 						msg2.payload = stderr;
 					}
 
-					msg.payload = Buffer.from(stdout,"binary");
-					if (SSHTools.isUtf8(msg.payload)) { msg.payload = msg.payload.toString(); }
-					//msg.payload = (typeof stdout != "string")?"":stdout;
-					node.status({});
+					// 核心修复：stdout为null/undefined时替换为空字符串，避免Buffer.from(null)
+					const rawOut = stdout ?? "";
+					msg.payload = Buffer.from(rawOut, "binary");
+					if (SSHTools.isUtf8(msg.payload)) { 
+						msg.payload = msg.payload.toString(); 
+					}
 
+					node.status({});
 					msg3 = RED.util.cloneMessage(msg);
 					if (err) {
 						msg3.payload = {code:err.code, message:err.message};
+						// 新增：标记连接断开
+						if (stdout === null) {
+							msg3.payload.message += " | SSH连接已断开，stdout=null";
+						}
 						if (err.signal) { msg3.payload.signal = err.signal; }
 						if (err.code === null) { node.status({fill:"red",shape:"dot",text:"sshexec.label.killed"}); }
 						else { node.status({fill:"red",shape:"dot",text:"error:"+err.code}); }

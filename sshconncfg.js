@@ -41,7 +41,7 @@ module.exports = function(RED) {
 				_sshconfig.tryKeyboard = true;
 			}
 
-			if (_sshconfig.password && node.credentials.hasOwnProperty("userid")) {
+			if (node.credentials.hasOwnProperty("userid")) {
 				_sshconfig.username = node.credentials.userid;
 			}
 		}

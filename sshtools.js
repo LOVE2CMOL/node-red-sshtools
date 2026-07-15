@@ -260,8 +260,11 @@ function _buildtunnel(self) {
 				} else {
 					stream.on('close', function(code, signal) {
 						let errobj = null;
-						let outstr = Buffer.concat(stream.sessobj.stdout);
-						let errstr = Buffer.concat(stream.sessobj.stderr);
+						// 关键修复：数组为空时给空数组，避免 Buffer.concat 得到 null 链路传递
+						const stdoutBufArr = Array.isArray(stream.sessobj.stdout) ? stream.sessobj.stdout : [];
+						const stderrBufArr = Array.isArray(stream.sessobj.stderr) ? stream.sessobj.stderr : [];
+						let outstr = Buffer.concat(stdoutBufArr);
+						let errstr = Buffer.concat(stderrBufArr);
 
 						if (_isUtf8(outstr)) { outstr = outstr.toString(); }
 						if (_isUtf8(errstr)) { errstr = errstr.toString(); }
@@ -279,8 +282,11 @@ function _buildtunnel(self) {
 							stream.rdyfcn(errobj, outstr, errstr);
 						}
 
+						// 强制清空缓冲区，避免残留空数据下次复用
+						stream.sessobj.stdout = [];
+						stream.sessobj.stderr = [];
 						clearTimeout(stream.cmdtimeout);
-						stream.end();
+						try { stream.end(); } catch(e) {}
 						_logoff(self);
 					}).on('end', function() {
 						clearTimeout(stream.cmdtimeout);
@@ -543,12 +549,14 @@ function _sftpcmd(self, sftp, cmdobj) {
 
 
 function _clearcmd(self, e) {
-	if (self._sshconn) {
-		while(self._cmdqueue.length > 0) {
-			let cmdobj = self._cmdqueue.shift();
-			cmdobj.rdyfcn(e,null);
-		}
-	}
+    if (self._sshconn) {
+        while(self._cmdqueue.length > 0) {
+            let cmdobj = self._cmdqueue.shift();
+            if (typeof cmdobj.rdyfcn === "function") {
+                cmdobj.rdyfcn(e, null, null);
+            }
+        }
+    }
 }
 
 function _retrycall(self, err) {
@@ -616,12 +624,38 @@ SSHTools.prototype.tunnelOpen = function(type, param, rdyfcn) {
 				if (self._sshconn) { self._sshconn.end(); }
 			}).on("close", function(had_error) {
 				self._sshLog("Closing Connection to SSH server "+self._sshcfg.host+":"+self._sshcfg.port);
+				// 先判断连接对象是否存在再操作
+				if (self._sshconn && self._sshconn._chanMgr) {
+					const chnls = Object.values(self._sshconn._chanMgr._channels || {});
+					for (let ch of chnls) {
+						try {
+							if (ch.tlsSock) ch.tlsSock.destroy();
+							ch.destroy();
+						} catch(e) {}
+					}
+					self._sshconn.sshconnecting = false;
+					self._sshconn.sshtimeout = null;
+				}
+
 				let errobj = (had_error?had_error:new Error('SSH Connection Closing'));
 				_clearcmd(self, errobj);
 				_retrycall(self, errobj);
 				self.end();
 			}).on("error", function(e) {
 				self._sshLog("Connection Error("+self._sshcfg.host+":"+self._sshcfg.port + "):" + e);
+				// 增加判空保护
+				if (self._sshconn && self._sshconn._chanMgr) {
+					const chnls = Object.values(self._sshconn._chanMgr._channels || {});
+					for (let ch of chnls) {
+						try {
+							if (ch.tlsSock) ch.tlsSock.destroy();
+							ch.destroy();
+						} catch(e) {}
+					}
+					self._sshconn.sshconnecting = false;
+					self._sshconn.sshtimeout = null;
+				}
+
 				_clearcmd(self, e);
 				_retrycall(self, e);
 				self.end();
